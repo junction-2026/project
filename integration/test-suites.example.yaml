@@ -1,0 +1,42 @@
+# Example suites (not used: compose-test.sh reads test-suites.yaml). Copy what
+# fits into test-suites.yaml once the component repos have the code they test.
+# Commands run from workspace/project with package caches that persist across runs:
+# JUNCTION_NPM_CACHE, JUNCTION_GO_MODCACHE, JUNCTION_GO_CACHE. Mount them when
+# installing inside a container, e.g.
+#   cd ../frontend && docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e CI=true \
+#     -v "$JUNCTION_NPM_CACHE":/tmp/.npm -v "$PWD":/app -w /app node:24 sh -c "npm ci && npm test"
+version: 1
+suites:
+  backend-unit:
+    owner_repo: backend
+    source_path: tests/unit
+    command: go test ./internal/...
+    requires_repos: [backend]
+    requires_services: []
+    timeout_seconds: 300
+    stage: repo-ci
+  backend-db:
+    owner_repo: backend
+    source_path: tests/database
+    command: go test ./tests/database/...
+    requires_repos: [backend]
+    requires_services: [postgres]
+    timeout_seconds: 600
+    stage: repo-ci
+  frontend-contract:
+    owner_repo: frontend
+    source_path: tests/contract
+    command: npm run test:contract
+    requires_repos: [frontend]
+    requires_services: []
+    timeout_seconds: 300
+    stage: repo-ci
+  full-e2e:
+    owner_repo: project
+    source_path: integration/tests
+    command: npm run test:e2e
+    requires_repos: [backend, frontend, project]
+    requires_services: [postgres, redis, backend, frontend]
+    timeout_seconds: 1200
+    stage: feature-ci
+    required_for_release: true

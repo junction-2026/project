@@ -1,0 +1,86 @@
+# ORG/project/.github/workflows/deploy.yml
+# Deploys the digest-pinned manifest of a published release to the project
+# server. Concurrency serializes deploys; the orchestrator reconciles the
+# desired release (pending runs may be replaced — never assume FIFO).
+name: deploy-project-release
+run-name: deploy ${{ github.event.release.tag_name || inputs.release_tag }}
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        type: string
+        required: true
+      rollback:
+        description: "true = explicit operator rollback to an older verified release (app images only, never DB)"
+        type: string
+        required: false
+        default: "false"
+      restore_state:
+        description: "rollback with state: name=snapshot-id,… restored by the server hooks before the images start (docs/07)"
+        type: string
+        required: false
+        default: ""
+permissions:
+  contents: read
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: demo                     # protected environment holds the deploy credentials
+    timeout-minutes: 30
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
+      ROLLBACK: ${{ inputs.rollback || 'false' }}
+      RESTORE_STATE: ${{ inputs.restore_state }}
+      JUNCTION_CI_REPO: junction-2026/orchestrator
+      JUNCTION_CI_VERSION: v1.3.0
+      JUNCTION_CI_SHA256: 79292445c75de86662199f6d31bac206accf4575803a9e08d9436833b4ad8f6a
+    steps:
+      - uses: actions/checkout@v4         # PIN BY SHA
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      # The release tag gives the manifest and that release's smoke suite. A
+      # rollback with state is dispatched on the default branch, because an
+      # old tag's workflow and scripts know nothing of restore_state: take
+      # the deploy scripts from the ref this run was started on.
+      - name: Deploy scripts of the dispatched ref
+        run: |
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout FETCH_HEAD -- scripts/deploy-release.sh scripts/deploy-on-server.sh scripts/smoke-and-report.sh
+      - name: Read-only token (CI reader App) for the helper download
+        id: token
+        uses: actions/create-github-app-token@v1   # PIN BY SHA; app has contents:read only
+        with:
+          app-id: ${{ vars.JUNCTION_CI_APP_ID }}
+          private-key: ${{ secrets.JUNCTION_CI_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Install junction-ci (pinned release binary, checksum-verified)
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          gh release download "$JUNCTION_CI_VERSION" --repo "$JUNCTION_CI_REPO" --pattern junction-ci-linux-amd64 --dir "$RUNNER_TEMP"
+          echo "$JUNCTION_CI_SHA256  $RUNNER_TEMP/junction-ci-linux-amd64" | sha256sum -c -
+          install -m 0755 "$RUNNER_TEMP/junction-ci-linux-amd64" "$RUNNER_TEMP/bin/junction-ci"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Verify immutable release manifest
+        run: ./scripts/validate-release-manifest.sh "releases/${RELEASE_TAG}.yaml"
+      - name: Deploy exact image digests
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: ./scripts/deploy-release.sh "releases/${RELEASE_TAG}.yaml"
+      - name: Smoke tests and status report
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SMOKE_URL: ${{ vars.SMOKE_URL }}
+        run: ./scripts/smoke-and-report.sh "releases/${RELEASE_TAG}.yaml"

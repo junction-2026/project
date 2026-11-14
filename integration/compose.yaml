@@ -1,0 +1,12 @@
+# Integration test harness, started by scripts/compose-test.sh before the suites.
+# This placeholder passes while the component repos are still empty. Replace it
+# with the real stack once the services ship Dockerfiles: see compose.example.yaml.
+# Candidate images must come from *_CANDIDATE_IMAGE variables (pinned digests).
+services:
+  harness:
+    image: busybox:1.37
+    command: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 2s
+      retries: 5

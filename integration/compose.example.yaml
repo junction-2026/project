@@ -1,0 +1,29 @@
+# Example test harness (not used: compose-test.sh runs compose.yaml). Copy what
+# fits into compose.yaml once the services ship Dockerfiles; adjust images,
+# build contexts and environment for the real app.
+# Candidate image references must be immutable digests via environment variables.
+services:
+  postgres:
+    image: postgres:17-alpine   # same server version, about a third of the download
+    environment:
+      POSTGRES_USER: junction_test
+      POSTGRES_PASSWORD: test_only
+      POSTGRES_DB: junction_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U junction_test -d junction_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  backend:
+    image: ${BACKEND_CANDIDATE_IMAGE:?must be pinned digest}
+    environment:
+      DATABASE_URL: postgres://junction_test:test_only@postgres:5432/junction_test?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+  frontend:
+    image: ${FRONTEND_CANDIDATE_IMAGE:?must be pinned digest}
+    depends_on:
+      backend:
+        condition: service_started
+  # Actual test runner should run in the same compose network and use service DNS.

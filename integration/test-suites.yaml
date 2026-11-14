@@ -1,0 +1,19 @@
+# Suites of feature integration and post-merge validation (custom orchestration
+# schema). Commands run from workspace/project with package caches that persist
+# across runs: JUNCTION_NPM_CACHE, JUNCTION_GO_MODCACHE, JUNCTION_GO_CACHE.
+# test-suites.example.yaml has unit, database, contract and end-to-end examples.
+version: 1
+suites:
+  # Placeholder so the first feature integrates green while the component repos
+  # are still empty. policies.mandatory_release_suites names it by default.
+  # Replace its command with the real end-to-end tests (and extend
+  # requires_repos) once the services exist.
+  full-e2e:
+    owner_repo: project
+    source_path: integration
+    command: echo "full-e2e placeholder; replace it in integration/test-suites.yaml"
+    requires_repos: [project]
+    requires_services: [harness]
+    timeout_seconds: 60
+    stage: feature-ci
+    required_for_release: true

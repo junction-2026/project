@@ -1,0 +1,105 @@
+# ORG/project/.github/workflows/integration.yml
+# Dispatched ONLY by the orchestrator with an immutable candidate manifest.
+# run-name carries the expected hash so the orchestrator can correlate runs.
+# Pin third-party actions to commit SHAs before production (docs/08).
+name: feature-integration
+run-name: feature-ci ${{ inputs.expected_hash }} (${{ inputs.source }})
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_ref:
+        description: "inline:<base64 canonical candidate JSON> or a project commit SHA holding candidates/<hash>.json"
+        required: true
+        type: string
+      expected_hash:
+        description: SHA-256 of the canonical candidate-set JSON
+        required: true
+        type: string
+      source:
+        description: feature | postmerge
+        required: false
+        default: feature
+        type: string
+permissions:
+  contents: read
+  packages: read   # main images of untouched components (each package must grant this repo read access)
+concurrency:
+  group: feature-ci-${{ inputs.expected_hash }}
+  cancel-in-progress: false
+env:
+  # junction-ci: same hashing/validation code as the orchestrator, pinned by
+  # release tag and SHA-256 (ci.* in junction.yaml, written by `junctionctl bootstrap`).
+  JUNCTION_CI_REPO: junction-2026/orchestrator
+  JUNCTION_CI_VERSION: v1.3.0
+  JUNCTION_CI_SHA256: 79292445c75de86662199f6d31bac206accf4575803a9e08d9436833b4ad8f6a
+  # slug=owner/name for every registered repo; generated from registry.yaml by `junctionctl bootstrap`.
+  JUNCTION_REPO_MAP: backend=junction-2026/backend,frontend=junction-2026/frontend,project=junction-2026/project,shared-specs=junction-2026/shared-specs
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4            # PIN BY SHA
+        with:
+          path: project-default
+      - name: Read-only token (CI reader App) for the helper and private candidate checkouts
+        id: token
+        uses: actions/create-github-app-token@v1   # PIN BY SHA; app has contents:read only
+        with:
+          app-id: ${{ vars.JUNCTION_CI_APP_ID }}
+          private-key: ${{ secrets.JUNCTION_CI_APP_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Install junction-ci (pinned release binary, checksum-verified)
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          gh release download "$JUNCTION_CI_VERSION" --repo "$JUNCTION_CI_REPO" --pattern junction-ci-linux-amd64 --dir "$RUNNER_TEMP"
+          echo "$JUNCTION_CI_SHA256  $RUNNER_TEMP/junction-ci-linux-amd64" | sha256sum -c -
+          install -m 0755 "$RUNNER_TEMP/junction-ci-linux-amd64" "$RUNNER_TEMP/bin/junction-ci"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Resolve and verify immutable candidate set
+        env:
+          MANIFEST_REF: ${{ inputs.manifest_ref }}
+          EXPECTED_HASH: ${{ inputs.expected_hash }}
+        run: junction-ci resolve-manifest -out artifacts/candidate.json
+      - name: Checkout exact candidate SHAs
+        env:
+          CI_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$CI_TOKEN" | base64 -w0)"
+          junction-ci checkout -manifest artifacts/candidate.json -workspace workspace -map "$JUNCTION_REPO_MAP"
+      # Package caches for suites (JUNCTION_NPM_CACHE, JUNCTION_GO_MODCACHE, JUNCTION_GO_CACHE
+      # in compose-test.sh). Keyed on lockfile content only, never on candidate SHAs: a cache
+      # only speeds up installs from the lockfile and is shared across generations.
+      - uses: actions/cache@v4               # PIN BY SHA
+        with:
+          path: |
+            ~/.npm
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: suite-deps-${{ runner.os }}-${{ hashFiles('workspace/**/package-lock.json', 'workspace/**/go.sum') }}
+          restore-keys: suite-deps-${{ runner.os }}-
+      # Untouched components run at their private GHCR main image. A plain `docker login`
+      # rather than docker/login-action, so the project's Actions policy needs no new action.
+      - name: Log in to ghcr.io (read-only)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+      # Keep "suite" in this step's name: a failure in any earlier step is classified
+      # as a setup failure (configuration; blocked, never auto-retried).
+      - name: Build, start services, run suites (harness from the candidate project SHA)
+        working-directory: workspace/project
+        env:
+          CANDIDATE_MANIFEST: ${{ github.workspace }}/artifacts/candidate.json
+          ARTIFACTS: ${{ github.workspace }}/artifacts
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: ../../project-default/scripts/compose-test.sh
+      - uses: actions/upload-artifact@v4     # PIN BY SHA
+        if: always()
+        with:
+          name: feature-integration-report
+          path: artifacts/

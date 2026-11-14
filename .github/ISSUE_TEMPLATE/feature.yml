@@ -1,0 +1,25 @@
+# Example in ORG/project/.github/ISSUE_TEMPLATE/feature.yml
+name: Feature request
+description: Propose a new feature; OpenSpec planning starts when registered.
+title: 'Feature: '
+labels: [feature]
+body:
+  - type: textarea
+    id: intent
+    attributes:
+      label: What should it do?
+      description: User-visible behavior and problem to solve
+    validations: {required: true}
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: What should be demonstrably true when complete?
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints and dependencies
+  - type: input
+    id: discord
+    attributes:
+      label: Discord feature-request thread
