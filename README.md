@@ -90,5 +90,7 @@ Rules for contributors are in [`CLAUDE.md`](CLAUDE.md):
 - **Release:** a release is an immutable manifest of digest-pinned backend and frontend images.
 - **Deploy:** publishing a release runs `deploy.yml`, which deploys it with Docker Compose and marks it healthy
   only after the smoke test passes.
-- **Rollback:** an explicit operator action. It is limited to app images; databases are never restored
-  automatically.
+- **Rollback:** if the smoke test fails, the previous healthy release's app images are restored automatically
+  and the deploy fails. An older release can only be deployed by an explicit operator rollback (`deploy.yml`
+  dispatched with `rollback=true`). Rollback covers app images only: databases are never restored automatically,
+  though an operator can pass `restore_state` to restore named state snapshots.
